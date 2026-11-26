@@ -72,3 +72,7 @@ The suite currently contains one empty test (`TestPrice`), so a pass does not ch
 ```bash
 dotnet run --project option_console/option_console.csproj
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
