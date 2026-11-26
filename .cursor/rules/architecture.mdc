@@ -1,0 +1,64 @@
+---
+description: OptionTools architecture — pricing, portfolios, and project boundaries
+alwaysApply: true
+---
+
+# Architecture for OptionTools
+
+This repository is a C# library and console host for option pricing, Greeks, and portfolio projection. `OptionLib` implements European Black-Scholes pricing and position math. `option_console` projects positions across dates and underlying prices. Tests live in `optionlib_test`.
+
+Target framework is .NET 10 (`net10.0`).
+
+## Repository layout
+
+| Folder | Purpose |
+|--------|---------|
+| `OptionLib/` | Core library — pricing, Greeks, instruments, accounts, portfolios |
+| `option_console/` | Console host for chain and position projections |
+| `optionlib_test/` | MSTest project for `OptionLib` |
+
+There is no root-level solution. Build the project for the area you are changing:
+
+- `OptionLib/OptionLib.csproj` (this is the library build)
+- `optionlib_test/optionlib_test.csproj`
+- `option_console/option_console.csproj` or `option_console/option_console.sln` (needs sibling `DynamicTable`)
+
+`OptionLib/OptionLib.sln` also lists `..\BinarySerializer\BinarySerializer.csproj`. That project is not in this repository and is not a vdiamond repo dependency. Building the solution fails. Do not add BinarySerializer, and do not edit the solution to remove it, unless Victor asks.
+
+`option_console` project-references **DynamicTable** as a sibling under the parent of this repo. `OptionLib` and `optionlib_test` do not require it and must not reference it.
+
+## Design principles
+
+- Price, point, and value are distinct: **Price** is the instrument quote, **Point** is Price × ContractLot, **Value** is Point × CurrencyPerPoint. Convert units only through `IUnderlying.ConvertVar`.
+- Quantity is always in contract lots.
+- Instruments project to a date and underlying price via `IInstrument.ProjectTo`. Reuse an `OptionProjection` instance when calling in a loop.
+- Option identity is an OCC-style key from `OptionKeyCCC` (`SYMBOL` + `yyMMdd` + `C`/`P` + strike×100). Symbol length is at most 6 characters.
+- Expiry and trading-period times are normalized to 16:00. No projection after expiry. When `dateTime` is after expiry, `Option.ProjectTo` returns without filling the projection.
+- Keep pricing math in `OptionCalculator`. Keep the position and cash ledger in `UnderlyingAccount`. Keep the bar loop and strategy hooks on `UnderlyingPortfolio`.
+- Keep the library free of console and test code. Sample usage belongs in `option_console`. Validation belongs in `optionlib_test`.
+- Do not add new NuGet packages unless Victor asks. `OptionLib` references `Microsoft.Extensions.ObjectPool` version `11.0.0-preview.5.26302.115` for `OptionProjectionPool`, plus the BCL. Leave that package reference unchanged.
+
+## Component architecture
+
+- **`IUnderlying` / `Underlying`** — exchange, symbol (max 6 chars), currency, `CurrencyPerPoint`, `ContractLot`, and `ConvertVar`.
+- **`IInstrument` / `IOption` / `Option`** — a European call or put. `ProjectTo` fills an `OptionProjection` from `OptionCalculator.Calculate`. `DeriveVolatility` solves implied vol.
+- **`OptionCalculator`** — static Black-Scholes European price and Greeks (`OptionGreeks`: Price, Delta, Gamma, Vega, Theta, Rho). Also time-to-expiry in years, implied volatility, and period probability helpers.
+- **`OptionProjection`** — snapshot of price, Greeks, point, value, and the source `IInstrument` at a datetime and underlying price. `OptionProjectionPool` pools instances.
+- **`IOptionParm` / `OptionParm`** — strike granularity and expiration weekdays for walking a chain.
+- **`ITradingPeriod` / `TradingPeriod`** — next/previous trading day at 16:00.
+- **`OptionUtil`** — string formatting, option-chain lists, and date/price projection grids over an `UnderlyingPortfolio`.
+- **`UnderlyingAccount`** — ledger of equity and option positions plus cash. Enforces chronological date order. Public operations are adjust, close, exercise, assign, and expire. There is no `OpenOptionPosition` method.
+- **`UnderlyingPortfolio`** — `IInstrument` over an account. `UpdateBar` expires options, then fires `UpdateBarBegin` / `UpdateOptionBar` / `UpdateBarEnd`. `ProjectTo` aggregates option and equity projections.
+
+Typical flow: construct `Underlying` → `Option` or `UnderlyingPortfolio` → `ProjectTo` / `UpdateBar` → consume `OptionProjection`.
+
+## Architectural constraints
+
+- Do not replace Black-Scholes in `OptionCalculator` with another model unless Victor asks. If the model changes, update this rule.
+- Do not compute Price/Point/Value unit conversions outside `IUnderlying.ConvertVar`.
+- Do not project an option after expiry. `Option.ProjectTo` must stay a no-op in that case.
+- Do not move console or test code into `OptionLib`.
+- Do not add a DynamicTable dependency to `OptionLib` or `optionlib_test`. Only `option_console` may reference it.
+- Do not introduce new NuGet packages, and do not change the ObjectPool preview package, unless Victor asks.
+- There is no root solution. Do not assume `dotnet build` at the repo root builds everything. Do not add a root solution unless Victor asks.
+- Do not change public OptionLib APIs unless Victor asks.
